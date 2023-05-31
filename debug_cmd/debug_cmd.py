@@ -15,8 +15,7 @@ import locale
 import argparse
 import platform
 import subprocess
-from typing import Union
-from typing import Generator
+from typing import Generator, Union
 
 import openai
 
@@ -30,14 +29,16 @@ def main() -> None:
     Entry point.
     """
     _assert_environment_variables()
-    commands = _load_cli_args()
+    commands, force = _load_cli_args()
 
     return_code, cmd_out = _exec_command(commands)
 
-    if return_code == 0:
+    # successfully ends.
+    if return_code == 0 and not force:
         print('\n-------- コマンドは成功しました --------')
-        sys.exit(0)
+        return
 
+    # ask llm about error.
     print('\n-------- エラー原因を解析中 --------')
     cmd_str = ' '.join(commands) if type(commands) is list else commands
     answer = _ask_llm_about_error(cmd=cmd_str, error_message=cmd_out)
@@ -56,11 +57,11 @@ def _assert_environment_variables() -> None:
             sys.exit(1)
 
 
-def _load_cli_args() -> Union[str, list[str]]:
+def _load_cli_args() -> tuple[str | list[str], bool]:
     """
     Parse CLI arguments.
 
-    :return: command line arguments.
+    :return: (<command line arguments>, <-f option>).
     """
     parser = argparse.ArgumentParser(
         prog='debug_cmd',
@@ -69,13 +70,17 @@ def _load_cli_args() -> Union[str, list[str]]:
 
     parser.add_argument('command', nargs='*', type=str, help='command and arguments separated by spaces. cannot use pipe(|), redirect(>), etc.')  # nopep8
     parser.add_argument('-c', type=str, help='shell string like "sh -c ..."')
+    parser.add_argument('-f', action=argparse.BooleanOptionalAction, help='even if the return code is successful(0), the process is executed forcefully.')  # nopep8
     args = parser.parse_args()
 
     if not args.command and not args.c:
         parser.print_help()
         sys.exit(1)
 
-    return args.c if args.c else [arg for arg in args.command if arg]
+    cmd = args.c if args.c else [arg for arg in args.command if arg]
+    force = args.f
+
+    return cmd, force
 
 
 def _exec_command(cmd: Union[str, list[str]]) -> (int, str):
