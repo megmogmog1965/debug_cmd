@@ -17,11 +17,20 @@ import platform
 import subprocess
 from typing import Generator, Union
 
-import openai
+from langchain import PromptTemplate
+from langchain.chat_models import ChatOpenAI
+from langchain.chains.summarize import load_summarize_chain
+from langchain.docstore.document import Document
+from langchain.text_splitter import CharacterTextSplitter
 
 
 # CLI encoding.
 _CLI_ENCODING = locale.getpreferredencoding()
+
+# llm.
+# :see: https://platform.openai.com/docs/models/model-endpoint-compatibility
+_LLM: ChatOpenAI = ChatOpenAI(temperature=1, model_name="gpt-4", max_tokens=4096)
+# _LLM = ChatOpenAI(temperature=1, model_name="gpt-3.5-turbo", max_tokens=2048)
 
 
 def main() -> None:
@@ -57,7 +66,7 @@ def _assert_environment_variables() -> None:
             sys.exit(1)
 
 
-def _load_cli_args() -> tuple[str | list[str], bool]:
+def _load_cli_args() -> tuple[Union[str, list[str]], bool]:
     """
     Parse CLI arguments.
 
@@ -122,29 +131,118 @@ def _get_stdout_by_lines(proc: subprocess.Popen) -> Generator[str, None, None]:
 
 def _ask_llm_about_error(cmd: str, error_message: str) -> str:
     """
-    Entry point.
-
-    :param cmd: command line arguments.
-    :param error_message: command error message.
-    :return: answer.
+    :param str cmd: command line arguments.
+    :param str error_message: error message.
+    :return: an answer.
     """
-    # create a chat completion
-    chat_completion = openai.ChatCompletion.create(
-        model='gpt-4',
-        messages=[
-            {'role': 'system', 'content': 'あなたは Mac, Unix, Linux のターミナル上で発生したコマンドのエラーの解消を手助けする AI アシスタントです'},
-            {'role': 'assistant', 'content': 'あなたの使っているパソコンの OS名, OSバージョン を教えて下さい'},
-            {'role': 'user', 'content': f'私のパソコンは {_get_os()} です'},
-            {'role': 'assistant', 'content': 'エラーが発生したコマンドを教えて下さい'},
-            {'role': 'user', 'content': cmd},
-            {'role': 'assistant', 'content': 'エラーが発生したコマンドのエラーメッセージを教えて下さい'},
-            {'role': 'user', 'content': error_message},
-            {'role': 'assistant', 'content': 'コマンドのエラーの原因が分かりました。以下にエラーの原因とその解決策を示します。追加の質問は受付しません'},
-        ]
+    # split error message.
+    docs = _split_error_message(error_message)
+
+    # create a prompt.
+    query_text = _get_question(cmd)
+
+    # using refine.
+    question_prompt = _get_prompt_template(query_text)
+    refine_prompt = _get_refine_template(query_text)
+    chain = load_summarize_chain(_LLM, chain_type="refine", question_prompt=question_prompt, refine_prompt=refine_prompt)  # nopep8
+
+    return chain.run(docs)
+
+
+def _split_error_message(error_message: str) -> list[Document]:
+    """
+    Split error message for LangChain Refine.
+
+    :param str error_message: error message.
+    :return: a list of LangChain documents.
+    """
+    text_splitter = CharacterTextSplitter(
+        separator='\n',
+        chunk_size=_LLM.max_tokens / 1,
+        chunk_overlap=_LLM.max_tokens / 10,
+        length_function=len,
+    )
+    texts = text_splitter.split_text(error_message)
+    documents = [Document(page_content=t) for t in texts]
+
+    return documents
+
+
+def _get_question(cmd: str) -> str:
+    """
+    :param cmd: command line arguments.
+    :return: llm prompt.
+    """
+    return (
+        'あなたは Mac, Unix, Linux のターミナル上で発生したコマンドのエラーの解消を手助けする AI アシスタントです\n'
+        f'質問者が使っているパソコンの OS名, OSバージョン: {_get_os()}\n'
+        f'質問者のパソコンでエラーが発生したコマンド: {cmd}\n'
+        'これらの情報と与えられたエラーメッセージを元に、エラーの原因とその解決策を示して下さい: '
     )
 
-    # print the chat completion
-    return chat_completion.choices[0].message.content
+
+def _get_prompt_template(query_str: str) -> PromptTemplate:
+    """
+    Create new prompt template in japanese.
+
+    :param str query_str: query string.
+    :return: A prompt template.
+    :see: https://python.langchain.com/en/latest/modules/chains/index_examples/summarize.html#the-refine-chain
+    """
+    prompt_template = (
+        "We have provided context information (error message) below.\n"
+        "------------\n"
+        "{text}\n"
+        "------------\n"
+        "Given this information, please answer the following question in Japanese.\n"
+        "------------\n"
+        f"{_escape_for_prompt_template(query_str)}\n"
+        "------------\n"
+    )
+
+    return PromptTemplate(template=prompt_template, input_variables=["text"])
+
+
+def _get_refine_template(query_str: str) -> PromptTemplate:
+    """
+    Create new refine template in japanese.
+
+    :param str query_str: query string.
+    :return: A refine template.
+    :see: https://python.langchain.com/en/latest/modules/chains/index_examples/summarize.html#the-refine-chain
+    """
+    refine_template = (
+        "Your job is to produce a final answer.\n"
+        "We have provided an existing answer below up to a certain point.\n"
+        "------------\n"
+        "{existing_answer}\n"
+        "------------\n"
+        "We have also provided original question for existing answer below.\n"
+        "------------\n"
+        f"{_escape_for_prompt_template(query_str)}\n"
+        "------------\n"
+        "We have the opportunity to refine the existing answer"
+        "(only if needed) with some more context (error message) below.\n"
+        "------------\n"
+        "{text}\n"
+        "------------\n"
+        "Given the new context, refine the original answer in Japanese.\n"
+        "If the context isn't useful, return the original answer."
+    )
+
+    return PromptTemplate(
+        input_variables=["existing_answer", "text"],
+        template=refine_template,
+    )
+
+
+def _escape_for_prompt_template(text: str) -> str:
+    """
+    :param text:
+    :return:
+    :see: https://github.com/hwchase17/langchain/issues/1660#issuecomment-1469320129
+    """
+    return text.replace('{', '{{').replace('}', '}}')
 
 
 def _get_os() -> str:
