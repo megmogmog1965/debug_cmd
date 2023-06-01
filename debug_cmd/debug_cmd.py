@@ -50,7 +50,7 @@ def main() -> None:
     # ask llm about error.
     print('\n-------- エラー原因を解析中 --------')
     cmd_str = ' '.join(commands) if type(commands) is list else commands
-    answer = _ask_llm_about_error(cmd=cmd_str, error_message=cmd_out)
+    answer = _ask_llm_about_error(cmd=cmd_str, return_code=return_code, error_message=cmd_out)
     print(answer)
 
 
@@ -129,9 +129,10 @@ def _get_stdout_by_lines(proc: subprocess.Popen) -> Generator[str, None, None]:
         yield line.decode(_CLI_ENCODING)
 
 
-def _ask_llm_about_error(cmd: str, error_message: str) -> str:
+def _ask_llm_about_error(cmd: str, return_code: int, error_message: str) -> str:
     """
     :param str cmd: command line arguments.
+    :param int return_code: return code.
     :param str error_message: error message.
     :return: an answer.
     """
@@ -139,7 +140,7 @@ def _ask_llm_about_error(cmd: str, error_message: str) -> str:
     docs = _split_error_message(error_message)
 
     # create a prompt.
-    query_text = _get_question(cmd)
+    query_text = _get_question(cmd, return_code)
 
     # using refine.
     question_prompt = _get_prompt_template(query_text)
@@ -168,15 +169,25 @@ def _split_error_message(error_message: str) -> list[Document]:
     return documents
 
 
-def _get_question(cmd: str) -> str:
+def _get_question(cmd: str, return_code: int) -> str:
     """
     :param cmd: command line arguments.
+    :param return_code: return code.
     :return: llm prompt.
     """
+    arch = platform.machine()
+    cwd = os.getcwd()
+    env_str = ','.join(os.environ.keys())
+
     return (
-        'あなたは Mac, Unix, Linux のターミナル上で発生したコマンドのエラーの解消を手助けする AI アシスタントです\n'
-        f'質問者が使っているパソコンの OS名, OSバージョン: {_get_os()}\n'
-        f'質問者のパソコンでエラーが発生したコマンド: {cmd}\n'
+        'あなたは Mac, Unix, Linux のターミナル上で発生したコマンドのエラーの解消を手助けする AI アシスタントです。'
+        '質問者が使っているパソコンの情報は次の通りです。\n'
+        f'エラーが発生したコマンド: {cmd}\n'
+        f'コマンドの終了コード: {return_code}\n'
+        f'OS名, OSバージョン: {_get_os()}\n'
+        f'CPUアーキテクチャ: {arch}\n'
+        f'カレントディレクトリ: {cwd}\n'
+        f'環境変数: {env_str}\n'
         'これらの情報と与えられたエラーメッセージを元に、エラーの原因とその解決策を示して下さい: '
     )
 
@@ -255,8 +266,7 @@ def _get_os() -> str:
     if os_name != 'Darwin':
         return f'{os_name} {os_version}'
 
-    mac_ver, _, arch = platform.mac_ver()
-    return f'macOS {mac_ver} ({arch})'
+    return f'macOS {platform.mac_ver()[0]}'
 
 
 if __name__ == '__main__':
