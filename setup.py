@@ -8,9 +8,9 @@ with open(path.join(path.abspath(path.dirname(__file__)), 'README.md'), encoding
 setup(
     name='debug_cmd',
     packages=['debug_cmd'],
-    version='1.0.3',
+    version='1.0.4',
     license='MIT',
-    install_requires=['openai'],
+    install_requires=['openai', 'langchain'],
     author='Yusuke Kawatsu',
     author_email='mail@sample.com',
     url='https://github.com/megmogmog1965/debug_cmd',
