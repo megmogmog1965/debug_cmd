@@ -29,8 +29,8 @@ _CLI_ENCODING = locale.getpreferredencoding()
 
 # llm.
 # :see: https://platform.openai.com/docs/models/model-endpoint-compatibility
-_LLM: ChatOpenAI = ChatOpenAI(temperature=1, model_name="gpt-4", max_tokens=4096)
-# _LLM = ChatOpenAI(temperature=1, model_name="gpt-3.5-turbo", max_tokens=2048)
+# _LLM: ChatOpenAI = ChatOpenAI(temperature=1, model_name="gpt-4", max_tokens=1024 * 4)
+_LLM: ChatOpenAI = ChatOpenAI(temperature=1, model_name="gpt-3.5-turbo-16k", max_tokens=1024 * 8)
 
 
 def main() -> None:
@@ -145,7 +145,7 @@ def _ask_llm_about_error(cmd: str, return_code: int, error_message: str) -> str:
     # using refine.
     question_prompt = _get_prompt_template(query_text)
     refine_prompt = _get_refine_template(query_text)
-    chain = load_summarize_chain(_LLM, chain_type="refine", question_prompt=question_prompt, refine_prompt=refine_prompt)  # nopep8
+    chain = load_summarize_chain(_LLM, chain_type='refine', question_prompt=question_prompt, refine_prompt=refine_prompt)  # nopep8
 
     return chain.run(docs)
 
@@ -180,7 +180,7 @@ def _get_question(cmd: str, return_code: int) -> str:
     env_str = ','.join(os.environ.keys())
 
     return (
-        'あなたは Mac, Unix, Linux のターミナル上で発生したコマンドのエラーの解消を手助けする AI アシスタントです。'
+        'あなたは Mac, Windows, Unix, Linux 系 OS のターミナル上で発生したコマンドのエラーの解消を手助けする AI アシスタントです。'
         '質問者が使っているパソコンの情報は次の通りです。\n'
         f'エラーが発生したコマンド: {cmd}\n'
         f'コマンドの終了コード: {return_code}\n'
